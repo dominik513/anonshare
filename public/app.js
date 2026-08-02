@@ -376,23 +376,29 @@ async function createPeer(initiator) {
     pc = new RTCPeerConnection({
         iceServers: [
             {
-                urls:
-                    "stun:stun.l.google.com:19302"
+                urls: "stun:stun.relay.metered.ca:80"
             },
             {
-                urls:
-                    "stun:stun.cloudflare.com:3478"
+                urls: "turn:global.relay.metered.ca:80",
+                username: "48f77a018104b53c1fad5990",
+                credential: "z244JKcipGf/rINB "
             },
             {
-                urls:
-                    "stun:stun1.l.google.com:19302"
+                urls: "turn:global.relay.metered.ca:80?transport=tcp",
+                username: "48f77a018104b53c1fad5990",
+                credential: "z244JKcipGf/rINB "
             },
             {
-                urls:
-                    "stun:stun2.l.google.com:19302"
+                urls: "turn:global.relay.metered.ca:443",
+                username: "48f77a018104b53c1fad5990",
+                credential: "z244JKcipGf/rINB "
+            },
+            {
+                urls: "turns:global.relay.metered.ca:443?transport=tcp",
+                username: "48f77a018104b53c1fad5990",
+                credential: "z244JKcipGf/rINB "
             }
-        ],
-        iceCandidatePoolSize: 10
+        ]
     });
 
     remoteDescriptionSet = false;
