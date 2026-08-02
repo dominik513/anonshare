@@ -437,7 +437,7 @@ fileInput.onchange = async () => {
 
         let offset = 0;
         let chunkIndex = 0;
-        const totalChunks = Math.ceil(file.size / CHUNCH_SIZE_CALC = CHUNK_SIZE); // или просто Math.ceil(file.size / CHUNK_SIZE)
+        const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
 
         while (offset < file.size) {
             // Контроль буфера, чтобы не перегрузить канал
@@ -491,7 +491,6 @@ let receivedSize = 0;
 let fileMeta = null;
 
 function receiveData(data) {
-    // Если пришли метаданные или конец файла (строка JSON)
     if (typeof data === "string") {
         let msg;
         try {
@@ -520,18 +519,17 @@ function receiveData(data) {
         return;
     }
 
-    // Если пришел бинарный чанк
     if (data instanceof ArrayBuffer) {
         if (!fileMeta) return;
 
         const view = new DataView(data);
         const chunkIndex = view.getUint32(0, false);
-        const packet = data.slice(4); // Отрезаем индекс
+        const packet = data.slice(4);
 
         receivedBuffers.push({ index: chunkIndex, data: packet });
         receivedSize += packet.byteLength;
 
-        progress.value = Math.floor((receivedSize / (fileMeta.size + (receivedBuffers.length * 16))) * 100);
+        progress.value = Math.min(100, Math.floor((receivedSize / fileMeta.size) * 100));
     }
 }
 
@@ -539,7 +537,6 @@ async function assembleAndDecryptFile() {
     try {
         status.textContent = "Decrypting file locally...";
 
-        // Сортируем чанки по порядку на случай прихода вразнобой
         receivedBuffers.sort((a, b) => a.index - b.index);
 
         const decryptedChunks = [];
