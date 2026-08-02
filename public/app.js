@@ -24,6 +24,9 @@ let incoming = null;
 let roomId = null;
 let secretKey = null;
 
+let remoteDescriptionSet = false;
+const pendingCandidates = [];
+
 const CHUNK_SIZE = 48 * 1024;
 
 function randomBytes(size) {
@@ -56,8 +59,7 @@ function base64ToBytes(str) {
 
     const binary = atob(str);
 
-    const bytes =
-        new Uint8Array(binary.length);
+    const bytes = new Uint8Array(binary.length);
 
     for (let i = 0; i < binary.length; i++) {
         bytes[i] = binary.charCodeAt(i);
@@ -99,21 +101,18 @@ async function loadSecret(encoded) {
 async function encryptChunk(data) {
     const iv = randomBytes(12);
 
-    const encrypted =
-        await crypto.subtle.encrypt(
-            {
-                name: "AES-GCM",
-                iv
-            },
-            secretKey,
-            data
-        );
+    const encrypted = await crypto.subtle.encrypt(
+        {
+            name: "AES-GCM",
+            iv
+        },
+        secretKey,
+        data
+    );
 
-    const result =
-        new Uint8Array(
-            iv.byteLength +
-            encrypted.byteLength
-        );
+    const result = new Uint8Array(
+        iv.byteLength + encrypted.byteLength
+    );
 
     result.set(iv, 0);
     result.set(
@@ -125,14 +124,10 @@ async function encryptChunk(data) {
 }
 
 async function decryptChunk(data) {
-    const bytes =
-        new Uint8Array(data);
+    const bytes = new Uint8Array(data);
 
-    const iv =
-        bytes.slice(0, 12);
-
-    const encrypted =
-        bytes.slice(12);
+    const iv = bytes.slice(0, 12);
+    const encrypted = bytes.slice(12);
 
     return crypto.subtle.decrypt(
         {
@@ -150,10 +145,19 @@ function connect() {
             ? "wss:"
             : "ws:";
 
-    ws =
-        new WebSocket(
-            `${protocol}//${location.host}`
-        );
+    /*
+     * IMPORTANT:
+     * Vercel WebSocket endpoint
+     */
+    const wsUrl =
+        `${protocol}//${location.host}/api/ws`;
+
+    console.log(
+        "Connecting to signaling server:",
+        wsUrl
+    );
+
+    ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
         console.log(
@@ -162,8 +166,17 @@ function connect() {
     };
 
     ws.onmessage = async event => {
-        const msg =
-            JSON.parse(event.data);
+        let msg;
+
+        try {
+            msg = JSON.parse(event.data);
+        } catch (error) {
+            console.error(
+                "Invalid signaling message:",
+                error
+            );
+            return;
+        }
 
         if (msg.type === "created") {
             showRoom(msg.room);
@@ -187,33 +200,60 @@ function connect() {
         }
 
         if (msg.type === "offer") {
-            await createPeer(false);
+            try {
+                await createPeer(false);
 
-            await pc.setRemoteDescription(
-                msg.offer
-            );
+                await pc.setRemoteDescription(
+                    msg.offer
+                );
 
-            const answer =
-                await pc.createAnswer();
+                remoteDescriptionSet = true;
 
-            await pc.setLocalDescription(
-                answer
-            );
+                await flushPendingCandidates();
 
-            ws.send(
-                JSON.stringify({
-                    type: "answer",
+                const answer =
+                    await pc.createAnswer();
+
+                await pc.setLocalDescription(
                     answer
-                })
-            );
+                );
+
+                ws.send(
+                    JSON.stringify({
+                        type: "answer",
+                        answer
+                    })
+                );
+            } catch (error) {
+                console.error(
+                    "Offer handling error:",
+                    error
+                );
+
+                status.textContent =
+                    "ERROR: Unable to establish peer connection.";
+            }
 
             return;
         }
 
         if (msg.type === "answer") {
-            await pc.setRemoteDescription(
-                msg.answer
-            );
+            try {
+                if (!pc) return;
+
+                await pc.setRemoteDescription(
+                    msg.answer
+                );
+
+                remoteDescriptionSet = true;
+
+                await flushPendingCandidates();
+            } catch (error) {
+                console.error(
+                    "Answer handling error:",
+                    error
+                );
+            }
 
             return;
         }
@@ -222,10 +262,26 @@ function connect() {
             if (!pc) return;
 
             try {
-                await pc.addIceCandidate(
-                    msg.candidate
+                if (
+                    remoteDescriptionSet &&
+                    pc.remoteDescription
+                ) {
+                    await pc.addIceCandidate(
+                        msg.candidate
+                    );
+                } else {
+                    pendingCandidates.push(
+                        msg.candidate
+                    );
+                }
+            } catch (error) {
+                console.warn(
+                    "ICE candidate error:",
+                    error
                 );
-            } catch {}
+            }
+
+            return;
         }
 
         if (msg.type === "peer-left") {
@@ -234,14 +290,54 @@ function connect() {
         }
 
         if (msg.type === "error") {
+            console.error(
+                "Server error:",
+                msg.message
+            );
+
             alert(msg.message);
         }
     };
 
-    ws.onerror = () => {
+    ws.onerror = error => {
+        console.error(
+            "WebSocket error:",
+            error
+        );
+
         status.textContent =
             "Connection to server failed.";
     };
+
+    ws.onclose = event => {
+        console.log(
+            "Signaling connection closed:",
+            event.code,
+            event.reason
+        );
+    };
+}
+
+async function flushPendingCandidates() {
+    if (!pc) return;
+
+    while (
+        pendingCandidates.length > 0
+    ) {
+        const candidate =
+            pendingCandidates.shift();
+
+        try {
+            await pc.addIceCandidate(
+                candidate
+            );
+        } catch (error) {
+            console.warn(
+                "Queued ICE candidate error:",
+                error
+            );
+        }
+    }
 }
 
 function showRoom(id) {
@@ -258,18 +354,30 @@ function showRoom(id) {
 }
 
 async function createPeer(initiator) {
-    pc =
-        new RTCPeerConnection({
-            iceServers: [
-                {
-                    urls:
-                        "stun:stun.l.google.com:19302"
-                }
-            ]
-        });
+    if (pc) {
+        try {
+            pc.close();
+        } catch {}
+    }
+
+    pc = new RTCPeerConnection({
+        iceServers: [
+            {
+                urls:
+                    "stun:stun.l.google.com:19302"
+            }
+        ]
+    });
+
+    remoteDescriptionSet = false;
+    pendingCandidates.length = 0;
 
     pc.onicecandidate = event => {
-        if (event.candidate) {
+        if (
+            event.candidate &&
+            ws &&
+            ws.readyState === WebSocket.OPEN
+        ) {
             ws.send(
                 JSON.stringify({
                     type: "candidate",
@@ -281,6 +389,11 @@ async function createPeer(initiator) {
     };
 
     pc.onconnectionstatechange = () => {
+        console.log(
+            "Peer connection state:",
+            pc.connectionState
+        );
+
         if (
             pc.connectionState ===
             "connected"
@@ -298,6 +411,13 @@ async function createPeer(initiator) {
             status.textContent =
                 "Peer connection lost.";
         }
+    };
+
+    pc.oniceconnectionstatechange = () => {
+        console.log(
+            "ICE state:",
+            pc.iceConnectionState
+        );
     };
 
     if (initiator) {
@@ -343,6 +463,19 @@ function setupDataChannel(channel) {
     channel.onopen = () => {
         status.textContent =
             "✓ Encrypted peer-to-peer connection established.";
+    };
+
+    channel.onerror = error => {
+        console.error(
+            "Data channel error:",
+            error
+        );
+    };
+
+    channel.onclose = () => {
+        console.log(
+            "Data channel closed"
+        );
     };
 
     channel.onmessage =
@@ -487,148 +620,164 @@ copyBtn.onclick =
         }, 1500);
     };
 
-fileInput.onchange = async () => {
-    const file = fileInput.files[0];
+fileInput.onchange =
+    async () => {
+        const file =
+            fileInput.files[0];
 
-    if (!file) return;
+        if (!file) return;
 
-    if (
-        !dataChannel ||
-        dataChannel.readyState !== "open"
-    ) {
-        alert("Secure connection is not ready.");
-        return;
-    }
-
-    if (!secretKey) {
-        alert("Encryption key is missing.");
-        return;
-    }
-
-    progressBox.classList.remove("hidden");
-
-    fileName.textContent = file.name;
-    progress.value = 0;
-
-    status.textContent =
-        "Encrypting file locally...";
-
-    try {
-        const original =
-            await file.arrayBuffer();
-
-        const iv =
-            randomBytes(12);
-
-        const encrypted =
-            await crypto.subtle.encrypt(
-                {
-                    name: "AES-GCM",
-                    iv
-                },
-                secretKey,
-                original
+        if (
+            !dataChannel ||
+            dataChannel.readyState !== "open"
+        ) {
+            alert(
+                "Secure connection is not ready."
             );
+            return;
+        }
 
-        const encryptedBytes =
-            new Uint8Array(encrypted);
-
-        const packet =
-            new Uint8Array(
-                12 + encryptedBytes.length
+        if (!secretKey) {
+            alert(
+                "Encryption key is missing."
             );
+            return;
+        }
 
-        packet.set(iv, 0);
-        packet.set(
-            encryptedBytes,
-            12
+        progressBox.classList.remove(
+            "hidden"
         );
 
-        const encoded =
-            bytesToBase64(packet);
+        fileName.textContent =
+            file.name;
 
-        const total =
-            Math.ceil(
-                encoded.length /
-                48000
-            );
-
-        dataChannel.send(
-            JSON.stringify({
-                type: "file",
-                name: file.name,
-                size: file.size,
-                mime: file.type,
-                total
-            })
-        );
+        progress.value = 0;
 
         status.textContent =
-            "Sending encrypted file...";
+            "Encrypting file locally...";
 
-        for (
-            let i = 0;
-            i < total;
-            i++
-        ) {
-            while (
-                dataChannel.bufferedAmount >
-                2 * 1024 * 1024
-            ) {
-                await new Promise(
-                    resolve =>
-                        setTimeout(
-                            resolve,
-                            20
-                        )
+        try {
+            const original =
+                await file.arrayBuffer();
+
+            const iv =
+                randomBytes(12);
+
+            const encrypted =
+                await crypto.subtle.encrypt(
+                    {
+                        name: "AES-GCM",
+                        iv
+                    },
+                    secretKey,
+                    original
                 );
-            }
 
-            const part =
-                encoded.slice(
-                    i * 48000,
-                    (i + 1) * 48000
+            const encryptedBytes =
+                new Uint8Array(
+                    encrypted
+                );
+
+            const packet =
+                new Uint8Array(
+                    12 +
+                    encryptedBytes.length
+                );
+
+            packet.set(iv, 0);
+
+            packet.set(
+                encryptedBytes,
+                12
+            );
+
+            const encoded =
+                bytesToBase64(packet);
+
+            const total =
+                Math.ceil(
+                    encoded.length /
+                    48000
                 );
 
             dataChannel.send(
                 JSON.stringify({
-                    type: "chunk",
-                    index: i,
-                    data: part
+                    type: "file",
+                    name: file.name,
+                    size: file.size,
+                    mime: file.type,
+                    total
                 })
             );
 
-            progress.value =
-                Math.floor(
-                    ((i + 1) / total) *
-                    100
+            status.textContent =
+                "Sending encrypted file...";
+
+            for (
+                let i = 0;
+                i < total;
+                i++
+            ) {
+                while (
+                    dataChannel.bufferedAmount >
+                    2 * 1024 * 1024
+                ) {
+                    await new Promise(
+                        resolve =>
+                            setTimeout(
+                                resolve,
+                                20
+                            )
+                    );
+                }
+
+                const part =
+                    encoded.slice(
+                        i * 48000,
+                        (i + 1) * 48000
+                    );
+
+                dataChannel.send(
+                    JSON.stringify({
+                        type: "chunk",
+                        index: i,
+                        data: part
+                    })
                 );
+
+                progress.value =
+                    Math.floor(
+                        ((i + 1) / total) *
+                        100
+                    );
+            }
+
+            dataChannel.send(
+                JSON.stringify({
+                    type: "file-end"
+                })
+            );
+
+            status.textContent =
+                "✓ File encrypted and sent.";
+
+        } catch (error) {
+            console.error(
+                "FILE ENCRYPTION ERROR:",
+                error
+            );
+
+            status.textContent =
+                "ERROR: Unable to encrypt file.";
         }
-
-        dataChannel.send(
-            JSON.stringify({
-                type: "file-end"
-            })
-        );
-
-        status.textContent =
-            "✓ File encrypted and sent.";
-    } catch (error) {
-        console.error(
-            "FILE ENCRYPTION ERROR:",
-            error
-        );
-
-        status.textContent =
-            "ERROR: Unable to encrypt file.";
-    }
-};
+    };
 
 async function receiveData(data) {
     if (typeof data !== "string") {
         console.error(
             "Unexpected binary message"
         );
+
         return;
     }
 
@@ -640,6 +789,7 @@ async function receiveData(data) {
         console.error(
             "Invalid message"
         );
+
         return;
     }
 
@@ -684,6 +834,7 @@ async function receiveData(data) {
             console.error(
                 "Invalid chunk index"
             );
+
             return;
         }
 
@@ -722,6 +873,7 @@ async function receiveData(data) {
                 {
                     expected:
                         incoming.total,
+
                     received:
                         incoming.receivedParts
                 }
@@ -838,4 +990,3 @@ async function receiveData(data) {
         }
     }
 }
-
