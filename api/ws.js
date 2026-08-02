@@ -10,22 +10,19 @@ const wss = new WebSocket.Server({
     maxPayload: 1024 * 1024
 });
 
-// ИСПРАВЛЕНИЕ: Явно обрабатываем протокол upgrade для WebSocket
+// Критически важно для работы WebSocket на Vercel/Node HTTP сервере
 server.on("upgrade", (request, socket, head) => {
     wss.handleUpgrade(request, socket, head, (ws) => {
         wss.emit("connection", ws, request);
     });
 });
 
-const redis = new Redis(
-    process.env.REDIS_URL,
-    {
-        maxRetriesPerRequest: null,
-        retryStrategy(times) {
-            return Math.min(times * 200, 5000);
-        }
+const redis = new Redis(process.env.REDIS_URL, {
+    maxRetriesPerRequest: null,
+    retryStrategy(times) {
+        return Math.min(times * 200, 5000);
     }
-);
+});
 
 const subscriber = redis.duplicate();
 const localRooms = new Map();
