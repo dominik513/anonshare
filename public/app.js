@@ -27,7 +27,11 @@ let secretKey = null;
 let remoteDescriptionSet = false;
 const pendingCandidates = [];
 
-const CHUNK_SIZE = 48 * 1024;
+let iceServers = [
+    {
+        urls: "stun:stun.l.google.com:19302"
+    }
+];
 
 function randomBytes(size) {
     const bytes = new Uint8Array(size);
@@ -58,7 +62,6 @@ function base64ToBytes(str) {
     }
 
     const binary = atob(str);
-
     const bytes = new Uint8Array(binary.length);
 
     for (let i = 0; i < binary.length; i++) {
@@ -98,57 +101,12 @@ async function loadSecret(encoded) {
     secretKey = await importKey(raw);
 }
 
-async function encryptChunk(data) {
-    const iv = randomBytes(12);
-
-    const encrypted = await crypto.subtle.encrypt(
-        {
-            name: "AES-GCM",
-            iv
-        },
-        secretKey,
-        data
-    );
-
-    const result = new Uint8Array(
-        iv.byteLength + encrypted.byteLength
-    );
-
-    result.set(iv, 0);
-    result.set(
-        new Uint8Array(encrypted),
-        iv.byteLength
-    );
-
-    return result.buffer;
-}
-
-async function decryptChunk(data) {
-    const bytes = new Uint8Array(data);
-
-    const iv = bytes.slice(0, 12);
-    const encrypted = bytes.slice(12);
-
-    return crypto.subtle.decrypt(
-        {
-            name: "AES-GCM",
-            iv
-        },
-        secretKey,
-        encrypted
-    );
-}
-
 function connect() {
     const protocol =
         location.protocol === "https:"
             ? "wss:"
             : "ws:";
 
-    /*
-     * IMPORTANT:
-     * Vercel WebSocket endpoint
-     */
     const wsUrl =
         `${protocol}//${location.host}/api/ws`;
 
@@ -175,6 +133,27 @@ function connect() {
                 "Invalid signaling message:",
                 error
             );
+            return;
+        }
+
+        /*
+         * Server sends TURN/STUN configuration.
+         */
+        if (msg.type === "ice-config") {
+            if (
+                Array.isArray(msg.iceServers) &&
+                msg.iceServers.length > 0
+            ) {
+                iceServers = msg.iceServers;
+
+                console.log(
+                    "ICE servers received:",
+                    iceServers.map(server => ({
+                        urls: server.urls
+                    }))
+                );
+            }
+
             return;
         }
 
@@ -287,6 +266,7 @@ function connect() {
         if (msg.type === "peer-left") {
             status.textContent =
                 "Peer disconnected.";
+            return;
         }
 
         if (msg.type === "error") {
@@ -360,13 +340,15 @@ async function createPeer(initiator) {
         } catch {}
     }
 
+    /*
+     * IMPORTANT:
+     *
+     * ICE now uses:
+     * - Google STUN
+     * - TURN received from signaling server
+     */
     pc = new RTCPeerConnection({
-        iceServers: [
-            {
-                urls:
-                    "stun:stun.l.google.com:19302"
-            }
-        ]
+        iceServers
     });
 
     remoteDescriptionSet = false;
@@ -420,6 +402,13 @@ async function createPeer(initiator) {
         );
     };
 
+    pc.onicegatheringstatechange = () => {
+        console.log(
+            "ICE gathering state:",
+            pc.iceGatheringState
+        );
+    };
+
     if (initiator) {
         dataChannel =
             pc.createDataChannel(
@@ -463,6 +452,10 @@ function setupDataChannel(channel) {
     channel.onopen = () => {
         status.textContent =
             "✓ Encrypted peer-to-peer connection established.";
+
+        console.log(
+            "Data channel opened"
+        );
     };
 
     channel.onerror = error => {
@@ -685,7 +678,6 @@ fileInput.onchange =
                 );
 
             packet.set(iv, 0);
-
             packet.set(
                 encryptedBytes,
                 12
@@ -694,10 +686,13 @@ fileInput.onchange =
             const encoded =
                 bytesToBase64(packet);
 
+            const CHUNK_SIZE =
+                48000;
+
             const total =
                 Math.ceil(
                     encoded.length /
-                    48000
+                    CHUNK_SIZE
                 );
 
             dataChannel.send(
@@ -733,8 +728,8 @@ fileInput.onchange =
 
                 const part =
                     encoded.slice(
-                        i * 48000,
-                        (i + 1) * 48000
+                        i * CHUNK_SIZE,
+                        (i + 1) * CHUNK_SIZE
                     );
 
                 dataChannel.send(
@@ -950,10 +945,7 @@ async function receiveData(data) {
                 );
 
             a.href = url;
-
-            a.download =
-                incoming.name;
-
+            a.download = incoming.name;
             a.textContent =
                 `Download ${incoming.name}`;
 
