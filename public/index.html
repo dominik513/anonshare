@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AnonShare</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<main>
+    <div class="logo">ANON<span>SHARE</span></div>
+
+    <p class="subtitle">
+        Private peer-to-peer file transfer
+    </p>
+
+    <section id="home" class="card">
+        <button id="createBtn" class="primary">
+            Create private room
+        </button>
+
+        <div class="divider">OR</div>
+
+        <input
+            id="roomInput"
+            placeholder="Enter room ID"
+            autocomplete="off"
+        >
+
+        <button id="joinBtn">
+            Join room
+        </button>
+    </section>
+
+    <section id="room" class="card hidden">
+
+        <div class="roomTitle">
+            Private room
+        </div>
+
+        <div class="roomLink">
+            <input id="link" readonly>
+            <button id="copyBtn">Copy</button>
+        </div>
+
+        <div id="status" class="status">
+            Waiting for another person...
+        </div>
+
+        <label id="drop">
+            <input type="file" id="fileInput">
+
+            <div class="dropTitle">
+                Select a file
+            </div>
+
+            <div class="dropSub">
+                File is transferred directly between browsers
+            </div>
+        </label>
+
+        <div id="progressBox" class="hidden">
+            <div id="fileName"></div>
+            <progress id="progress" value="0" max="100"></progress>
+        </div>
+
+    </section>
+
+    <footer>
+        No accounts · No file storage · Peer-to-peer
+    </footer>
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>

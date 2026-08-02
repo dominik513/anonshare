@@ -1,0 +1,149 @@
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    min-height: 100vh;
+    background: #080808;
+    color: #eee;
+    font-family: system-ui, sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+main {
+    width: min(560px, 92vw);
+    text-align: center;
+}
+
+.logo {
+    font-size: 42px;
+    font-weight: 900;
+    letter-spacing: -2px;
+}
+
+.logo span {
+    opacity: .45;
+}
+
+.subtitle {
+    color: #777;
+    margin-top: 5px;
+    margin-bottom: 30px;
+}
+
+.card {
+    background: #111;
+    border: 1px solid #242424;
+    border-radius: 18px;
+    padding: 25px;
+}
+
+button,
+input {
+    width: 100%;
+    height: 50px;
+    border-radius: 10px;
+    border: 1px solid #292929;
+    background: #181818;
+    color: white;
+    font-size: 15px;
+    padding: 0 15px;
+}
+
+button {
+    cursor: pointer;
+}
+
+button:hover {
+    background: #222;
+}
+
+.primary {
+    background: white;
+    color: black;
+    border: none;
+    font-weight: 700;
+}
+
+.primary:hover {
+    background: #ddd;
+}
+
+.divider {
+    margin: 22px 0;
+    color: #555;
+    font-size: 12px;
+}
+
+input {
+    margin-bottom: 10px;
+}
+
+.hidden {
+    display: none !important;
+}
+
+.roomTitle {
+    font-size: 20px;
+    font-weight: 700;
+    margin-bottom: 18px;
+}
+
+.roomLink {
+    display: flex;
+    gap: 8px;
+}
+
+.roomLink input {
+    margin: 0;
+}
+
+.roomLink button {
+    width: 90px;
+}
+
+.status {
+    margin: 22px 0;
+    color: #999;
+}
+
+#drop {
+    display: block;
+    border: 1px dashed #444;
+    border-radius: 14px;
+    padding: 40px 20px;
+    cursor: pointer;
+}
+
+#drop:hover {
+    border-color: #777;
+}
+
+#fileInput {
+    display: none;
+}
+
+.dropTitle {
+    font-size: 18px;
+    font-weight: 700;
+}
+
+.dropSub {
+    color: #666;
+    font-size: 13px;
+    margin-top: 8px;
+}
+
+progress {
+    width: 100%;
+    margin-top: 15px;
+}
+
+footer {
+    margin-top: 25px;
+    color: #444;
+    font-size: 12px;
+}
