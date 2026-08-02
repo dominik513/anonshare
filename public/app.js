@@ -27,6 +27,9 @@ let secretKey = null;
 let remoteDescriptionSet = false;
 const pendingCandidates = [];
 
+// Размер чанка данных (16 KB)
+const CHUNK_SIZE = 16384;
+
 function randomBytes(size) {
     const bytes = new Uint8Array(size);
     crypto.getRandomValues(bytes);
@@ -35,11 +38,9 @@ function randomBytes(size) {
 
 function bytesToBase64(bytes) {
     let binary = "";
-
     for (const byte of bytes) {
         binary += String.fromCharCode(byte);
     }
-
     return btoa(binary)
         .replace(/\+/g, "-")
         .replace(/\//g, "_")
@@ -69,9 +70,7 @@ async function importKey(raw) {
     return crypto.subtle.importKey(
         "raw",
         raw,
-        {
-            name: "AES-GCM"
-        },
+        { name: "AES-GCM" },
         false,
         ["encrypt", "decrypt"]
     );
@@ -85,29 +84,20 @@ async function createSecret() {
 
 async function loadSecret(encoded) {
     const raw = base64ToBytes(encoded);
-
     if (raw.length !== 32) {
         throw new Error("Invalid room secret");
     }
-
     secretKey = await importKey(raw);
 }
 
 function connect() {
-    const protocol =
-        location.protocol === "https:"
-            ? "wss:"
-            : "ws:";
-
-    const wsUrl =
-        `${protocol}//${location.host}/api/ws`;
+    const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+    const wsUrl = `${protocol}//${location.host}/api/ws`;
 
     console.log("Connecting to:", wsUrl);
 
     if (ws) {
-        try {
-            ws.close();
-        } catch {}
+        try { ws.close(); } catch {}
     }
 
     ws = new WebSocket(wsUrl);
@@ -118,14 +108,10 @@ function connect() {
 
     ws.onmessage = async event => {
         let msg;
-
         try {
             msg = JSON.parse(event.data);
         } catch (error) {
-            console.error(
-                "Invalid signaling message:",
-                error
-            );
+            console.error("Invalid signaling message:", error);
             return;
         }
 
@@ -140,39 +126,26 @@ function connect() {
         }
 
         if (msg.type === "peer-joined") {
-            status.textContent =
-                "Peer found. Establishing secure connection...";
-
+            status.textContent = "Peer found. Establishing secure connection...";
             if (isCreator) {
                 try {
                     await createPeer(true);
                 } catch (error) {
-                    console.error(
-                        "Peer creation error:",
-                        error
-                    );
-
-                    status.textContent =
-                        "ERROR: Unable to establish peer connection.";
+                    console.error("Peer creation error:", error);
+                    status.textContent = "ERROR: Unable to establish peer connection.";
                 }
             }
-
             return;
         }
 
         if (msg.type === "offer") {
             try {
                 await createPeer(false);
-
                 await pc.setRemoteDescription(msg.offer);
-
                 remoteDescriptionSet = true;
-
                 await flushPendingCandidates();
 
-                const answer =
-                    await pc.createAnswer();
-
+                const answer = await pc.createAnswer();
                 await pc.setLocalDescription(answer);
 
                 sendSignal({
@@ -180,129 +153,69 @@ function connect() {
                     answer: pc.localDescription
                 });
             } catch (error) {
-                console.error(
-                    "Offer handling error:",
-                    error
-                );
-
-                status.textContent =
-                    "ERROR: Unable to establish peer connection.";
+                console.error("Offer handling error:", error);
+                status.textContent = "ERROR: Unable to establish peer connection.";
             }
-
             return;
         }
 
         if (msg.type === "answer") {
             try {
                 if (!pc) return;
-
-                await pc.setRemoteDescription(
-                    msg.answer
-                );
-
+                await pc.setRemoteDescription(msg.answer);
                 remoteDescriptionSet = true;
-
                 await flushPendingCandidates();
             } catch (error) {
-                console.error(
-                    "Answer handling error:",
-                    error
-                );
+                console.error("Answer handling error:", error);
             }
-
             return;
         }
 
         if (msg.type === "candidate") {
             if (!pc) return;
-
             try {
-                if (
-                    remoteDescriptionSet &&
-                    pc.remoteDescription
-                ) {
-                    await pc.addIceCandidate(
-                        msg.candidate
-                    );
+                if (remoteDescriptionSet && pc.remoteDescription) {
+                    await pc.addIceCandidate(msg.candidate);
                 } else {
-                    pendingCandidates.push(
-                        msg.candidate
-                    );
+                    pendingCandidates.push(msg.candidate);
                 }
             } catch (error) {
-                console.warn(
-                    "ICE candidate error:",
-                    error
-                );
+                console.warn("ICE candidate error:", error);
             }
-
             return;
         }
 
         if (msg.type === "peer-left") {
-            status.textContent =
-                "Peer disconnected.";
+            status.textContent = "Peer disconnected.";
             return;
         }
 
         if (msg.type === "error") {
-            console.error(
-                "Server error:",
-                msg.message
-            );
-
+            console.error("Server error:", msg.message);
             alert(msg.message);
         }
     };
 
     ws.onerror = error => {
-        console.error(
-            "WebSocket error:",
-            error
-        );
-
-        status.textContent =
-            "Connection to server failed.";
-    };
-
-    ws.onclose = event => {
-        console.log(
-            "Signaling connection closed:",
-            event.code,
-            event.reason
-        );
+        console.error("WebSocket error:", error);
+        status.textContent = "Connection to server failed.";
     };
 }
 
 function sendSignal(message) {
-    if (
-        ws &&
-        ws.readyState === WebSocket.OPEN
-    ) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify(message));
-    } else {
-        console.error(
-            "WebSocket is not connected"
-        );
     }
 }
 
 async function flushPendingCandidates() {
     if (!pc) return;
-
     while (pendingCandidates.length > 0) {
-        const candidate =
-            pendingCandidates.shift();
-
+        const candidate = pendingCandidates.shift();
         try {
-            await pc.addIceCandidate(
-                candidate
-            );
+            await pc.addIceCandidate(candidate);
         } catch (error) {
-            console.warn(
-                "Queued ICE candidate error:",
-                error
-            );
+            console.warn("Queued ICE candidate error:", error);
         }
     }
 }
@@ -310,50 +223,34 @@ async function flushPendingCandidates() {
 function showRoom(id) {
     home.classList.add("hidden");
     room.classList.remove("hidden");
-
     roomId = id;
 
-    const secret =
-        location.hash.substring(1);
-
-    link.value =
-        `${location.origin}/?room=${encodeURIComponent(id)}#${secret}`;
-
-    status.textContent =
-        "Room created. Send the link to your peer.";
+    const secret = location.hash.substring(1);
+    link.value = `${location.origin}/?room=${encodeURIComponent(id)}#${secret}`;
+    status.textContent = "Room created. Send the link to your peer.";
 }
 
 async function createPeer(initiator) {
     if (pc) {
-        try {
-            pc.close();
-        } catch {}
+        try { pc.close(); } catch {}
     }
 
     pc = new RTCPeerConnection({
         iceServers: [
-            {
-                urls:
-                    "stun:stun.relay.metered.ca:80"
-            },
+            { urls: "stun:stun.relay.metered.ca:80" },
             {
                 urls: [
                     "turn:global.relay.metered.ca:80",
                     "turn:global.relay.metered.ca:80?transport=tcp",
                     "turn:global.relay.metered.ca:443"
                 ],
-                username:
-                    "48f77a018104b53c1fad5990",
-                credential:
-                    "z244JKcipGf/rINB"
+                username: "48f77a018104b53c1fad5990",
+                credential: "z244JKcipGf/rINB"
             },
             {
-                urls:
-                    "turns:global.relay.metered.ca:443?transport=tcp",
-                username:
-                    "48f77a018104b53c1fad5990",
-                credential:
-                    "z244JKcipGf/rINB"
+                urls: "turns:global.relay.metered.ca:443?transport=tcp",
+                username: "48f77a018104b53c1fad5990",
+                credential: "z244JKcipGf/rINB"
             }
         ]
     });
@@ -362,11 +259,7 @@ async function createPeer(initiator) {
     pendingCandidates.length = 0;
 
     pc.onicecandidate = event => {
-        if (
-            event.candidate &&
-            ws &&
-            ws.readyState === WebSocket.OPEN
-        ) {
+        if (event.candidate && ws && ws.readyState === WebSocket.OPEN) {
             sendSignal({
                 type: "candidate",
                 candidate: event.candidate
@@ -374,65 +267,26 @@ async function createPeer(initiator) {
         }
     };
 
-    pc.oniceconnectionstatechange = () => {
-        console.log(
-            "ICE state:",
-            pc.iceConnectionState
-        );
-    };
-
-    pc.onicegatheringstatechange = () => {
-        console.log(
-            "ICE gathering:",
-            pc.iceGatheringState
-        );
-    };
-
     pc.onconnectionstatechange = () => {
-        console.log(
-            "Peer connection state:",
-            pc.connectionState
-        );
+        console.log("Peer connection state:", pc.connectionState);
 
-        if (
-            pc.connectionState ===
-            "connected"
-        ) {
-            status.textContent =
-                "✓ Encrypted peer-to-peer connection established.";
+        if (pc.connectionState === "connected") {
+            status.textContent = "✓ Encrypted peer-to-peer connection established.";
         }
-
-        if (
-            pc.connectionState ===
-            "failed"
-        ) {
-            status.textContent =
-                "Peer connection failed.";
+        if (pc.connectionState === "failed") {
+            status.textContent = "Peer connection failed.";
         }
-
-        if (
-            pc.connectionState ===
-            "disconnected"
-        ) {
-            status.textContent =
-                "Peer connection lost.";
+        if (pc.connectionState === "disconnected") {
+            status.textContent = "Peer connection lost.";
         }
     };
 
     if (initiator) {
-        dataChannel =
-            pc.createDataChannel("files");
+        dataChannel = pc.createDataChannel("files");
+        setupDataChannel(dataChannel);
 
-        setupDataChannel(
-            dataChannel
-        );
-
-        const offer =
-            await pc.createOffer();
-
-        await pc.setLocalDescription(
-            offer
-        );
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
 
         sendSignal({
             type: "offer",
@@ -440,36 +294,25 @@ async function createPeer(initiator) {
         });
     } else {
         pc.ondatachannel = event => {
-            dataChannel =
-                event.channel;
-
-            setupDataChannel(
-                dataChannel
-            );
+            dataChannel = event.channel;
+            setupDataChannel(dataChannel);
         };
     }
 }
 
 function setupDataChannel(channel) {
-    channel.binaryType =
-        "arraybuffer";
+    channel.binaryType = "arraybuffer";
 
     channel.onopen = () => {
-        status.textContent =
-            "✓ Encrypted peer-to-peer connection established.";
+        status.textContent = "✓ Encrypted peer-to-peer connection established.";
     };
 
     channel.onerror = error => {
-        console.error(
-            "Data channel error:",
-            error
-        );
+        console.error("Data channel error:", error);
     };
 
     channel.onclose = () => {
-        console.log(
-            "Data channel closed"
-        );
+        console.log("Data channel closed");
     };
 
     channel.onmessage = event => {
@@ -479,72 +322,41 @@ function setupDataChannel(channel) {
 
 createBtn.onclick = async () => {
     isCreator = true;
-
     try {
-        const secret =
-            await createSecret();
-
+        const secret = await createSecret();
         location.hash = secret;
-
-        status.textContent =
-            "Connecting to server...";
-
+        status.textContent = "Connecting to server...";
         connect();
 
         const wait = setInterval(() => {
-            if (
-                ws &&
-                ws.readyState ===
-                    WebSocket.OPEN
-            ) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
                 clearInterval(wait);
-
-                sendSignal({
-                    type: "create"
-                });
+                sendSignal({ type: "create" });
             }
         }, 50);
 
         setTimeout(() => {
             clearInterval(wait);
-
-            if (
-                !ws ||
-                ws.readyState !==
-                    WebSocket.OPEN
-            ) {
-                status.textContent =
-                    "ERROR: WebSocket server is unavailable.";
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                status.textContent = "ERROR: WebSocket server is unavailable.";
             }
         }, 10000);
-
     } catch (error) {
-        console.error(
-            "Create room error:",
-            error
-        );
-
-        status.textContent =
-            "ERROR: Unable to create room.";
+        console.error("Create room error:", error);
+        status.textContent = "ERROR: Unable to create room.";
     }
 };
 
 joinBtn.onclick = async () => {
-    const input =
-        roomInput.value.trim();
-
+    const input = roomInput.value.trim();
     if (!input) {
         alert("Enter room ID");
         return;
     }
 
-    const secret =
-        location.hash.substring(1);
-
+    const secret = location.hash.substring(1);
     if (!secret) {
-        alert(
-            "This room link has no secret key."
-        );
+        alert("This room link has no secret key.");
         return;
     }
 
@@ -556,466 +368,219 @@ joinBtn.onclick = async () => {
     }
 
     roomId = input;
+    history.replaceState({}, "", `/?room=${encodeURIComponent(roomId)}#${secret}`);
 
-    history.replaceState(
-        {},
-        "",
-        `/?room=${encodeURIComponent(roomId)}#${secret}`
-    );
-
-    status.textContent =
-        "Connecting to server...";
-
+    status.textContent = "Connecting to server...";
     connect();
 
     const wait = setInterval(() => {
-        if (
-            ws &&
-            ws.readyState ===
-                WebSocket.OPEN
-        ) {
+        if (ws && ws.readyState === WebSocket.OPEN) {
             clearInterval(wait);
-
-            sendSignal({
-                type: "join",
-                room: roomId
-            });
+            sendSignal({ type: "join", room: roomId });
         }
     }, 50);
 
     setTimeout(() => {
         clearInterval(wait);
-
-        if (
-            !ws ||
-            ws.readyState !==
-                WebSocket.OPEN
-        ) {
-            status.textContent =
-                "ERROR: WebSocket server is unavailable.";
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            status.textContent = "ERROR: WebSocket server is unavailable.";
         }
     }, 10000);
 };
 
-const existingRoom =
-    new URLSearchParams(
-        location.search
-    ).get("room");
+const existingRoom = new URLSearchParams(location.search).get("room");
+const existingSecret = location.hash.substring(1);
 
-const existingSecret =
-    location.hash.substring(1);
-
-if (
-    existingRoom &&
-    existingSecret
-) {
-    roomInput.value =
-        existingRoom;
-
-    loadSecret(
-        existingSecret
-    ).catch(() => {
-        console.warn(
-            "Invalid room secret"
-        );
-    });
+if (existingRoom && existingSecret) {
+    roomInput.value = existingRoom;
+    loadSecret(existingSecret).catch(() => {});
 }
 
 copyBtn.onclick = async () => {
     try {
-        await navigator.clipboard.writeText(
-            link.value
-        );
-
-        copyBtn.textContent =
-            "Copied";
-
-        setTimeout(() => {
-            copyBtn.textContent =
-                "Copy";
-        }, 1500);
-
+        await navigator.clipboard.writeText(link.value);
+        copyBtn.textContent = "Copied";
+        setTimeout(() => { copyBtn.textContent = "Copy"; }, 1500);
     } catch (error) {
-        console.error(
-            "Copy error:",
-            error
-        );
+        console.error("Copy error:", error);
     }
 };
 
+// --- ОТПРАВКА ФАЙЛА (Потоково) ---
 fileInput.onchange = async () => {
-    const file =
-        fileInput.files[0];
-
+    const file = fileInput.files[0];
     if (!file) return;
 
-    if (
-        !dataChannel ||
-        dataChannel.readyState !==
-            "open"
-    ) {
-        alert(
-            "Secure connection is not ready."
-        );
+    if (!dataChannel || dataChannel.readyState !== "open") {
+        alert("Secure connection is not ready.");
         return;
     }
 
     if (!secretKey) {
-        alert(
-            "Encryption key is missing."
-        );
+        alert("Encryption key is missing.");
         return;
     }
 
-    progressBox.classList.remove(
-        "hidden"
-    );
-
-    fileName.textContent =
-        file.name;
-
+    progressBox.classList.remove("hidden");
+    fileName.textContent = file.name;
     progress.value = 0;
-
-    status.textContent =
-        "Encrypting file locally...";
+    status.textContent = "Sending file...";
 
     try {
-        const original =
-            await file.arrayBuffer();
+        // 1. Отправляем метаданные о файле
+        dataChannel.send(JSON.stringify({
+            type: "file-meta",
+            name: file.name,
+            size: file.size,
+            mime: file.type
+        }));
 
-        const iv =
-            randomBytes(12);
+        let offset = 0;
+        let chunkIndex = 0;
+        const totalChunks = Math.ceil(file.size / CHUNCH_SIZE_CALC = CHUNK_SIZE); // или просто Math.ceil(file.size / CHUNK_SIZE)
 
-        const encrypted =
-            await crypto.subtle.encrypt(
-                {
-                    name: "AES-GCM",
-                    iv
-                },
-                secretKey,
-                original
-            );
-
-        const encryptedBytes =
-            new Uint8Array(
-                encrypted
-            );
-
-        const packet =
-            new Uint8Array(
-                12 +
-                encryptedBytes.length
-            );
-
-        packet.set(iv, 0);
-
-        packet.set(
-            encryptedBytes,
-            12
-        );
-
-        const encoded =
-            bytesToBase64(packet);
-
-        const total =
-            Math.ceil(
-                encoded.length /
-                48000
-            );
-
-        dataChannel.send(
-            JSON.stringify({
-                type: "file",
-                name: file.name,
-                size: file.size,
-                mime: file.type,
-                total
-            })
-        );
-
-        status.textContent =
-            "Sending encrypted file...";
-
-        for (
-            let i = 0;
-            i < total;
-            i++
-        ) {
-            while (
-                dataChannel.bufferedAmount >
-                2 * 1024 * 1024
-            ) {
-                await new Promise(
-                    resolve =>
-                        setTimeout(
-                            resolve,
-                            20
-                        )
-                );
+        while (offset < file.size) {
+            // Контроль буфера, чтобы не перегрузить канал
+            while (dataChannel.bufferedAmount > 2 * 1024 * 1024) {
+                await new Promise(resolve => setTimeout(resolve, 20));
             }
 
-            const part =
-                encoded.slice(
-                    i * 48000,
-                    (i + 1) * 48000
-                );
+            const chunkSlice = file.slice(offset, offset + CHUNK_SIZE);
+            const chunkBuffer = await chunkSlice.arrayBuffer();
 
-            dataChannel.send(
-                JSON.stringify({
-                    type: "chunk",
-                    index: i,
-                    data: part
-                })
+            // Шифруем каждый чанк отдельно
+            const iv = randomBytes(12);
+            const encryptedChunk = await crypto.subtle.encrypt(
+                { name: "AES-GCM", iv },
+                secretKey,
+                chunkBuffer
             );
 
-            progress.value =
-                Math.floor(
-                    (
-                        (i + 1) /
-                        total
-                    ) * 100
-                );
+            // Собираем бинарный пакет: [IV (12 байт)] + [Зашифрованные данные]
+            const packet = new Uint8Array(12 + encryptedChunk.byteLength);
+            packet.set(iv, 0);
+            packet.set(new Uint8Array(encryptedChunk), 12);
+
+            // Также добавляем префикс с индексом чанка (первые 4 байта) чтобы получатель знал порядок
+            const finalPacket = new Uint8Array(4 + packet.byteLength);
+            const view = new DataView(finalPacket.buffer);
+            view.setUint32(0, chunkIndex, false);
+            finalPacket.set(packet, 4);
+
+            dataChannel.send(finalPacket);
+
+            offset += CHUNK_SIZE;
+            chunkIndex++;
+
+            progress.value = Math.floor((offset / file.size) * 100);
         }
 
-        dataChannel.send(
-            JSON.stringify({
-                type: "file-end"
-            })
-        );
-
-        status.textContent =
-            "✓ File encrypted and sent.";
+        // Сигнал окончания передачи
+        dataChannel.send(JSON.stringify({ type: "file-end" }));
+        status.textContent = "✓ File sent successfully.";
 
     } catch (error) {
-        console.error(
-            "FILE ENCRYPTION ERROR:",
-            error
-        );
-
-        status.textContent =
-            "ERROR: Unable to encrypt file.";
+        console.error("FILE SEND ERROR:", error);
+        status.textContent = "ERROR: Unable to send file.";
     }
 };
 
-async function receiveData(data) {
-    if (
-        typeof data !==
-        "string"
-    ) {
-        console.error(
-            "Unexpected binary message"
-        );
-        return;
-    }
+// --- ПОЛУЧЕНИЕ ФАЙЛА ---
+let receivedBuffers = [];
+let receivedSize = 0;
+let fileMeta = null;
 
-    let msg;
-
-    try {
-        msg = JSON.parse(data);
-    } catch {
-        console.error(
-            "Invalid message"
-        );
-        return;
-    }
-
-    if (msg.type === "file") {
-        incoming = {
-            name: msg.name,
-            size: msg.size,
-            mime: msg.mime,
-            total: msg.total,
-            parts:
-                new Array(msg.total),
-            receivedParts: 0
-        };
-
-        progressBox.classList.remove(
-            "hidden"
-        );
-
-        progressBox
-            .querySelectorAll("a")
-            .forEach(a =>
-                a.remove()
-            );
-
-        fileName.textContent =
-            msg.name;
-
-        progress.value = 0;
-
-        status.textContent =
-            "Receiving encrypted file...";
-
-        return;
-    }
-
-    if (msg.type === "chunk") {
-        if (!incoming) return;
-
-        if (
-            msg.index < 0 ||
-            msg.index >=
-                incoming.total
-        ) {
-            console.error(
-                "Invalid chunk index"
-            );
-            return;
-        }
-
-        if (
-            incoming.parts[
-                msg.index
-            ] === undefined
-        ) {
-            incoming.parts[
-                msg.index
-            ] = msg.data;
-
-            incoming.receivedParts++;
-
-            progress.value =
-                Math.floor(
-                    (
-                        incoming.receivedParts /
-                        incoming.total
-                    ) * 100
-                );
-        }
-
-        return;
-    }
-
-    if (
-        msg.type ===
-        "file-end"
-    ) {
-        if (!incoming) return;
-
-        if (
-            incoming.receivedParts !==
-            incoming.total
-        ) {
-            console.error(
-                "Missing chunks",
-                {
-                    expected:
-                        incoming.total,
-                    received:
-                        incoming.receivedParts
-                }
-            );
-
-            status.textContent =
-                "ERROR: File transfer incomplete.";
-
-            incoming = null;
-
-            return;
-        }
-
+function receiveData(data) {
+    // Если пришли метаданные или конец файла (строка JSON)
+    if (typeof data === "string") {
+        let msg;
         try {
-            status.textContent =
-                "Decrypting file locally...";
-
-            const encoded =
-                incoming.parts.join(
-                    ""
-                );
-
-            const packet =
-                base64ToBytes(
-                    encoded
-                );
-
-            const iv =
-                packet.slice(
-                    0,
-                    12
-                );
-
-            const encrypted =
-                packet.slice(12);
-
-            const decrypted =
-                await crypto.subtle.decrypt(
-                    {
-                        name:
-                            "AES-GCM",
-                        iv
-                    },
-                    secretKey,
-                    encrypted
-                );
-
-            if (
-                decrypted.byteLength !==
-                incoming.size
-            ) {
-                throw new Error(
-                    `Size mismatch: ${decrypted.byteLength} != ${incoming.size}`
-                );
-            }
-
-            const blob =
-                new Blob(
-                    [decrypted],
-                    {
-                        type:
-                            incoming.mime ||
-                            "application/octet-stream"
-                    }
-                );
-
-            const url =
-                URL.createObjectURL(
-                    blob
-                );
-
-            const a =
-                document.createElement(
-                    "a"
-                );
-
-            a.href = url;
-            a.download =
-                incoming.name;
-
-            a.textContent =
-                `Download ${incoming.name}`;
-
-            a.style.display =
-                "block";
-
-            a.style.marginTop =
-                "20px";
-
-            a.style.color =
-                "white";
-
-            progressBox.appendChild(
-                a
-            );
-
-            progress.value = 100;
-
-            status.textContent =
-                "✓ File decrypted successfully.";
-
-            incoming = null;
-
-        } catch (error) {
-            console.error(
-                "FINAL DECRYPTION ERROR:",
-                error
-            );
-
-            status.textContent =
-                "ERROR: Unable to decrypt file.";
-
-            incoming = null;
+            msg = JSON.parse(data);
+        } catch {
+            return;
         }
+
+        if (msg.type === "file-meta") {
+            fileMeta = msg;
+            receivedBuffers = [];
+            receivedSize = 0;
+
+            progressBox.classList.remove("hidden");
+            progressBox.querySelectorAll("a").forEach(a => a.remove());
+            fileName.textContent = msg.name;
+            progress.value = 0;
+            status.textContent = "Receiving file...";
+            return;
+        }
+
+        if (msg.type === "file-end" && fileMeta) {
+            assembleAndDecryptFile();
+            return;
+        }
+        return;
+    }
+
+    // Если пришел бинарный чанк
+    if (data instanceof ArrayBuffer) {
+        if (!fileMeta) return;
+
+        const view = new DataView(data);
+        const chunkIndex = view.getUint32(0, false);
+        const packet = data.slice(4); // Отрезаем индекс
+
+        receivedBuffers.push({ index: chunkIndex, data: packet });
+        receivedSize += packet.byteLength;
+
+        progress.value = Math.floor((receivedSize / (fileMeta.size + (receivedBuffers.length * 16))) * 100);
+    }
+}
+
+async function assembleAndDecryptFile() {
+    try {
+        status.textContent = "Decrypting file locally...";
+
+        // Сортируем чанки по порядку на случай прихода вразнобой
+        receivedBuffers.sort((a, b) => a.index - b.index);
+
+        const decryptedChunks = [];
+
+        for (const item of receivedBuffers) {
+            const packet = new Uint8Array(item.data);
+            const iv = packet.slice(0, 12);
+            const encrypted = packet.slice(12);
+
+            const decrypted = await crypto.subtle.decrypt(
+                { name: "AES-GCM", iv },
+                secretKey,
+                encrypted
+            );
+
+            decryptedChunks.push(decrypted);
+        }
+
+        const blob = new Blob(decryptedChunks, {
+            type: fileMeta.mime || "application/octet-stream"
+        });
+
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = fileMeta.name;
+        a.textContent = `Download ${fileMeta.name}`;
+        a.style.display = "block";
+        a.style.marginTop = "20px";
+        a.style.color = "white";
+
+        progressBox.appendChild(a);
+        progress.value = 100;
+        status.textContent = "✓ File decrypted successfully.";
+
+        fileMeta = null;
+        receivedBuffers = [];
+    } catch (error) {
+        console.error("DECRYPTION ERROR:", error);
+        status.textContent = "ERROR: Unable to decrypt file.";
+        fileMeta = null;
+        receivedBuffers = [];
     }
 }
